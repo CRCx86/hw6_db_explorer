@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -94,12 +95,31 @@ func tableList(db *sql.DB, query url.Values) ([]string, error) {
 
 func findTableRows(db *sql.DB, query url.Values, path string) ([]map[string]interface{}, error) {
 
+	//https://forum.golangbridge.org/t/database-rows-scan-unknown-number-of-columns-json/7378/15
+
 	params := strings.Split(path, "/")
 	var objects []map[string]interface{}
 
 	if len(params) > 1 {
 		table_name := params[1]
-		rows, ok := db.Query(fmt.Sprintf("SELECT * FROM %s", table_name))
+
+		limit, e := strconv.Atoi(query.Get("limit"))
+		if e != nil && limit < 0 {
+			return nil, e
+		}
+		offset, e := strconv.Atoi(query.Get("offset"))
+		if e != nil && offset < 0 {
+			return nil, e
+		}
+		rows, ok := db.Query(fmt.Sprintf("SELECT * FROM %s where %s = ? limit ? offset ?", table_name, "id"), "1", limit, offset)
+
+		// вынести в отдельную процедуру
+		//var where int
+		//if (len(params) > 2) {
+		//	where, _ = strconv.Atoi(params[2])
+		//}
+		//rows, ok := db.Query(fmt.Sprintf("SELECT * FROM %s where %s = ?", table_name, "id"), "1")
+
 		if ok != nil {
 			return nil, ok
 		}
