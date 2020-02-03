@@ -173,26 +173,26 @@ func TestApis(t *testing.T) {
 		//		},
 		//	},
 		//},
-		Case{
-			Path: "/items/1",
-			Result: CR{
-				"response": CR{
-					"record": CR{
-						"id":          1,
-						"title":       "database/sql",
-						"description": "Рассказать про базы данных",
-						"updated":     "rvasily",
-					},
-				},
-			},
-		},
-		Case{
-			Path:   "/items/100500",
-			Status: http.StatusNotFound,
-			Result: CR{
-				"error": "record not found",
-			},
-		},
+		//Case{
+		//	Path: "/items/1",
+		//	Result: CR{
+		//		"response": CR{
+		//			"record": CR{
+		//				"id":          1,
+		//				"title":       "database/sql",
+		//				"description": "Рассказать про базы данных",
+		//				"updated":     "rvasily",
+		//			},
+		//		},
+		//	},
+		//},
+		//Case{
+		//	Path:   "/items/100500",
+		//	Status: http.StatusNotFound,
+		//	Result: CR{
+		//		"error": "record not found",
+		//	},
+		//},
 
 		// тут идёт создание и редактирование
 		Case{

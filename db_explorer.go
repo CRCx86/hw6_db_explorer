@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/go-sql-driver/mysql"
 	"net/http"
@@ -29,6 +30,7 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 }
 
 func handler(c config) func(http.ResponseWriter, *http.Request) {
+
 	return func(writer http.ResponseWriter, request *http.Request) {
 		query, ok := url.ParseQuery(request.URL.RawQuery)
 		if ok != nil {
@@ -46,18 +48,38 @@ func handler(c config) func(http.ResponseWriter, *http.Request) {
 					}
 					writer.Write(Response(tables, "tables"))
 				} else {
-					records, ok := findTableRows(c.db, query, path)
-					if ok != nil {
-						if sqlError, e := (ok).(*mysql.MySQLError); e && sqlError.Number == 1146 {
-							writer.WriteHeader(http.StatusNotFound)
-							writer.Write(ResponseError("unknown table"))
-						} else {
-							writer.WriteHeader(http.StatusInternalServerError)
+					params := strings.Split(path, "/")
+					table := params[1]
+					id := params[2]
+					switch len(params) {
+					case 2:
+						records, ok := findAllRows(c.db, query, table)
+						if ok != nil {
+							if sqlError, e := (ok).(*mysql.MySQLError); e && sqlError.Number == 1146 {
+								writer.WriteHeader(http.StatusNotFound)
+								writer.Write(ResponseError("unknown table"))
+							} else {
+								writer.WriteHeader(http.StatusInternalServerError)
+							}
+							return
 						}
-						return
+						responseRecords := ResponseRecords(records, "records")
+						writer.Write(responseRecords)
+					case 3:
+						records, ok := findById(c.db, query, table, id)
+						if ok != nil {
+							if ok.Error() == "record not found" {
+								writer.WriteHeader(http.StatusNotFound)
+								writer.Write(ResponseError("record not found"))
+							} else {
+								writer.WriteHeader(http.StatusInternalServerError)
+							}
+							return
+						}
+						responseRecords := ResponseRecord(records, "record")
+						writer.Write(responseRecords)
 					}
-					responseRecords := ResponseRecords(records, "records")
-					writer.Write(responseRecords)
+
 				}
 			}
 		case http.MethodPost:
@@ -70,6 +92,7 @@ func handler(c config) func(http.ResponseWriter, *http.Request) {
 			writer.WriteHeader(http.StatusInternalServerError)
 		}
 	}
+
 }
 
 func tableList(db *sql.DB, query url.Values) ([]string, error) {
@@ -93,72 +116,107 @@ func tableList(db *sql.DB, query url.Values) ([]string, error) {
 	return tables, nil
 }
 
-func findTableRows(db *sql.DB, query url.Values, path string) ([]map[string]interface{}, error) {
+func findAllRows(db *sql.DB, query url.Values, table string) ([]map[string]interface{}, error) {
 
 	//https://forum.golangbridge.org/t/database-rows-scan-unknown-number-of-columns-json/7378/15
-
-	params := strings.Split(path, "/")
 	var objects []map[string]interface{}
 
-	if len(params) > 1 {
-		table_name := params[1]
+	tableName := table
 
-		limit, e := strconv.Atoi(query.Get("limit"))
-		if e != nil && limit < 0 {
-			return nil, e
-		}
-		offset, e := strconv.Atoi(query.Get("offset"))
-		if e != nil && offset < 0 {
-			return nil, e
-		}
-		rows, ok := db.Query(fmt.Sprintf("SELECT * FROM %s where %s = ? limit ? offset ?", table_name, "id"), "1", limit, offset)
+	limit, e := strconv.Atoi(query.Get("limit"))
+	if e != nil && limit < 0 {
+		return nil, e
+	}
 
-		// вынести в отдельную процедуру
-		//var where int
-		//if (len(params) > 2) {
-		//	where, _ = strconv.Atoi(params[2])
-		//}
-		//rows, ok := db.Query(fmt.Sprintf("SELECT * FROM %s where %s = ?", table_name, "id"), "1")
+	offset, e := strconv.Atoi(query.Get("offset"))
+	if e != nil && offset < 0 {
+		return nil, e
+	}
 
-		if ok != nil {
-			return nil, ok
-		}
-		defer rows.Close()
+	rows, ok := db.Query(fmt.Sprintf("SELECT * FROM %s limit ? offset ?", tableName), limit, offset)
+	if ok != nil {
+		return nil, ok
+	}
+	defer rows.Close()
 
-		for rows.Next() {
-			columnTypes, _ := rows.ColumnTypes()
+	for rows.Next() {
+		columnTypes, _ := rows.ColumnTypes()
 
-			values := make([]interface{}, len(columnTypes))
-			object := map[string]interface{}{}
-			for i, column := range columnTypes {
+		values := make([]interface{}, len(columnTypes))
+		object := map[string]interface{}{}
+		for i, column := range columnTypes {
 
-				v := reflect.New(column.ScanType()).Interface()
-				switch v.(type) {
-				case *[]uint8:
-					v = new(*string)
-				case *int32:
-					v = new(*int32)
-				case *sql.RawBytes:
-					v = new(*string)
-				default:
-					values[i] = v
-				}
-
-				object[column.Name()] = v
+			v := reflect.New(column.ScanType()).Interface()
+			switch v.(type) {
+			case *[]uint8:
+				v = new(*string)
+			case *int32:
+				v = new(*int32)
+			case *sql.RawBytes:
+				v = new(*string)
+			default:
 				values[i] = v
 			}
 
-			ok := rows.Scan(values...)
-			if ok != nil {
-				return nil, ok
-			}
-
-			objects = append(objects, object)
+			object[column.Name()] = v
+			values[i] = v
 		}
 
+		ok := rows.Scan(values...)
+		if ok != nil {
+			return nil, ok
+		}
+
+		objects = append(objects, object)
 	}
 
 	return objects, nil
+}
+
+func findById(db *sql.DB, query url.Values, table string, id string) (map[string]interface{}, error) {
+
+	var objects map[string]interface{}
+
+	rows, ok := db.Query(fmt.Sprintf("SELECT * FROM %s where %s = ?", table, "id"), id)
+	if ok != nil {
+		return nil, ok
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		columnTypes, _ := rows.ColumnTypes()
+
+		values := make([]interface{}, len(columnTypes))
+		object := map[string]interface{}{}
+		for i, column := range columnTypes {
+
+			v := reflect.New(column.ScanType()).Interface()
+			switch v.(type) {
+			case *[]uint8:
+				v = new(*string)
+			case *int32:
+				v = new(*int32)
+			case *sql.RawBytes:
+				v = new(*string)
+			default:
+				values[i] = v
+			}
+
+			object[column.Name()] = v
+			values[i] = v
+		}
+
+		ok := rows.Scan(values...)
+		if ok != nil {
+			return nil, ok
+		}
+
+		objects = object
+
+		return objects, nil
+	}
+
+	return nil, errors.New("record not found")
 }
 
 func Response(rows []string, key string) []byte {
@@ -174,6 +232,15 @@ func ResponseRecords(records []map[string]interface{}, key string) []byte {
 	response := make(map[string]interface{})
 	responseRows := make(map[string]interface{})
 	responseRows[key] = records
+	response["response"] = responseRows
+	json, _ := json.Marshal(response)
+	return json
+}
+
+func ResponseRecord(record map[string]interface{}, key string) []byte {
+	response := make(map[string]interface{})
+	responseRows := make(map[string]interface{})
+	responseRows[key] = record
 	response["response"] = responseRows
 	json, _ := json.Marshal(response)
 	return json
