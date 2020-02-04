@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/go-sql-driver/mysql"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -41,19 +43,19 @@ func handler(c config) func(http.ResponseWriter, *http.Request) {
 			{
 				path := request.URL.Path
 				if len(path) == 1 {
-					tables, ok := tableList(c.db, query)
+					result, ok := tableList(c.db, query)
 					if ok != nil {
 						writer.WriteHeader(http.StatusInternalServerError)
 						return
 					}
-					writer.Write(Response(tables, "tables"))
+					writer.Write(Response(result, "tables"))
 				} else {
 					params := strings.Split(path, "/")
 					table := params[1]
 					id := params[2]
 					switch len(params) {
 					case 2:
-						records, ok := findAllRows(c.db, query, table)
+						result, ok := findAllRows(c.db, query, table)
 						if ok != nil {
 							if sqlError, e := (ok).(*mysql.MySQLError); e && sqlError.Number == 1146 {
 								writer.WriteHeader(http.StatusNotFound)
@@ -63,10 +65,10 @@ func handler(c config) func(http.ResponseWriter, *http.Request) {
 							}
 							return
 						}
-						responseRecords := ResponseRecords(records, "records")
+						responseRecords := ResponseRecords(result, "records")
 						writer.Write(responseRecords)
 					case 3:
-						records, ok := findById(c.db, query, table, id)
+						result, ok := findById(c.db, query, table, id)
 						if ok != nil {
 							if ok.Error() == "record not found" {
 								writer.WriteHeader(http.StatusNotFound)
@@ -76,7 +78,7 @@ func handler(c config) func(http.ResponseWriter, *http.Request) {
 							}
 							return
 						}
-						responseRecords := ResponseRecord(records, "record")
+						responseRecords := ResponseRecord(result, "record")
 						writer.Write(responseRecords)
 					}
 
@@ -84,8 +86,30 @@ func handler(c config) func(http.ResponseWriter, *http.Request) {
 			}
 		case http.MethodPost:
 
-		case http.MethodPut:
+			path := request.URL.Path
+			params := strings.Split(path, "/")
+			table := params[1]
+			id := params[2]
+			body := request.Body
+			result, ok := createUpdateRow(c.db, table, body, id)
+			if ok != nil {
+				writer.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			writer.Write(ResponseUpdated(result, "id"))
 
+		case http.MethodPut:
+			path := request.URL.Path
+			params := strings.Split(path, "/")
+			table := params[1]
+			id := params[2]
+			body := request.Body
+			result, ok := createUpdateRow(c.db, table, body, id)
+			if ok != nil {
+				writer.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			writer.Write(ResponseCreated(result, "updated"))
 		case http.MethodDelete:
 
 		default:
@@ -219,6 +243,83 @@ func findById(db *sql.DB, query url.Values, table string, id string) (map[string
 	return nil, errors.New("record not found")
 }
 
+func createUpdateRow(db *sql.DB, table string, body io.ReadCloser, id string) (int, error) {
+
+	rows, ok := ioutil.ReadAll(body)
+	if ok != nil {
+		return -1, ok
+	}
+	defer body.Close()
+
+	bodyValues := make(map[string]interface{})
+	ok = json.Unmarshal(rows, &bodyValues)
+	// POST
+	if id == "" {
+
+		var fields, placeholders string
+		var values []interface{}
+		for k, v := range bodyValues {
+
+			if k == "id" {
+				continue
+			}
+
+			if len(fields) > 0 {
+				fields += ","
+				placeholders += ","
+			}
+			fields += "`" + k + "`"
+			values = append(values, v)
+			placeholders += "?"
+		}
+
+		result, ok := db.Exec(fmt.Sprintf("INSERT INTO %s (%s) VALUES(%s)", table, fields, placeholders), values...)
+		if ok != nil {
+			return -1, ok
+		}
+
+		created, ok := result.LastInsertId()
+		if ok != nil {
+			return -1, ok
+		}
+
+		return int(created), nil
+
+	} else {
+		// PUT
+		var fields, placeholders string
+		var values []interface{}
+		for k, v := range bodyValues {
+
+			if k == "id" {
+				continue
+			}
+
+			if len(fields) > 0 {
+				fields += ","
+				placeholders += ","
+			}
+			fields += "`" + k + "`"
+			values = append(values, v)
+			placeholders += "?"
+		}
+
+		result, ok := db.Exec(fmt.Sprintf("INSERT INTO %s (%s) VALUES(%s)", table, fields, placeholders), values...)
+		if ok != nil {
+			return -1, ok
+		}
+
+		updated, ok := result.RowsAffected()
+		if ok != nil {
+			return -1, ok
+		}
+
+		return int(updated), nil
+	}
+
+	return 0, nil
+}
+
 func Response(rows []string, key string) []byte {
 	response := make(map[string]interface{})
 	responseRows := make(map[string]interface{})
@@ -249,6 +350,24 @@ func ResponseRecord(record map[string]interface{}, key string) []byte {
 func ResponseError(error string) []byte {
 	response := make(map[string]interface{})
 	response["error"] = error
+	json, _ := json.Marshal(response)
+	return json
+}
+
+func ResponseCreated(id int, key string) []byte {
+	response := make(map[string]interface{})
+	responseRows := make(map[string]interface{})
+	responseRows[key] = id
+	response["response"] = responseRows
+	json, _ := json.Marshal(response)
+	return json
+}
+
+func ResponseUpdated(id int, key string) []byte {
+	response := make(map[string]interface{})
+	responseRows := make(map[string]interface{})
+	responseRows[key] = id
+	response["response"] = responseRows
 	json, _ := json.Marshal(response)
 	return json
 }
