@@ -193,130 +193,130 @@ func TestApis(t *testing.T) {
 		//		"error": "record not found",
 		//	},
 		//},
-
-		// тут идёт создание и редактирование
-		Case{
-			Path:   "/items/",
-			Method: http.MethodPut,
-			Body: CR{
-				"id":          42, // auto increment primary key игнорируется при вставке
-				"title":       "db_crud",
-				"description": "",
-			},
-			Result: CR{
-				"response": CR{
-					"id": 3,
-				},
-			},
-		},
-		// это пример хрупкого теста
-		// если много раз вызывать один и тот же тест - записи будут добавляться
-		// поэтому придётся сделать сброс базы каждый раз в PrepareTestData
-		Case{
-			Path: "/items/3",
-			Result: CR{
-				"response": CR{
-					"record": CR{
-						"id":          3,
-						"title":       "db_crud",
-						"description": "",
-						"updated":     nil,
-					},
-				},
-			},
-		},
-		Case{
-			Path:   "/items/3",
-			Method: http.MethodPost,
-			Body: CR{
-				"description": "Написать программу db_crud",
-			},
-			Result: CR{
-				"response": CR{
-					"updated": 1,
-				},
-			},
-		},
-		Case{
-			Path: "/items/3",
-			Result: CR{
-				"response": CR{
-					"record": CR{
-						"id":          3,
-						"title":       "db_crud",
-						"description": "Написать программу db_crud",
-						"updated":     nil,
-					},
-				},
-			},
-		},
-
-		// обновление null-поля в таблице
-		Case{
-			Path:   "/items/3",
-			Method: http.MethodPost,
-			Body: CR{
-				"updated": "autotests",
-			},
-			Result: CR{
-				"response": CR{
-					"updated": 1,
-				},
-			},
-		},
-		Case{
-			Path: "/items/3",
-			Result: CR{
-				"response": CR{
-					"record": CR{
-						"id":          3,
-						"title":       "db_crud",
-						"description": "Написать программу db_crud",
-						"updated":     "autotests",
-					},
-				},
-			},
-		},
-
-		// обновление null-поля в таблице
-		Case{
-			Path:   "/items/3",
-			Method: http.MethodPost,
-			Body: CR{
-				"updated": nil,
-			},
-			Result: CR{
-				"response": CR{
-					"updated": 1,
-				},
-			},
-		},
-		Case{
-			Path: "/items/3",
-			Result: CR{
-				"response": CR{
-					"record": CR{
-						"id":          3,
-						"title":       "db_crud",
-						"description": "Написать программу db_crud",
-						"updated":     nil,
-					},
-				},
-			},
-		},
-
-		// ошибки
-		Case{
-			Path:   "/items/3",
-			Method: http.MethodPost,
-			Status: http.StatusBadRequest,
-			Body: CR{
-				"id": 4, // primary key нельзя обновлять у существующей записи
-			},
-			Result: CR{
-				"error": "field id have invalid type",
-			},
-		},
+		//
+		//// тут идёт создание и редактирование
+		//Case{
+		//	Path:   "/items/",
+		//	Method: http.MethodPut,
+		//	Body: CR{
+		//		"id":          42, // auto increment primary key игнорируется при вставке
+		//		"title":       "db_crud",
+		//		"description": "",
+		//	},
+		//	Result: CR{
+		//		"response": CR{
+		//			"id": 3,
+		//		},
+		//	},
+		//},
+		//// это пример хрупкого теста
+		//// если много раз вызывать один и тот же тест - записи будут добавляться
+		//// поэтому придётся сделать сброс базы каждый раз в PrepareTestData
+		//Case{
+		//	Path: "/items/3",
+		//	Result: CR{
+		//		"response": CR{
+		//			"record": CR{
+		//				"id":          3,
+		//				"title":       "db_crud",
+		//				"description": "",
+		//				"updated":     nil,
+		//			},
+		//		},
+		//	},
+		//},
+		//Case{
+		//	Path:   "/items/3",
+		//	Method: http.MethodPost,
+		//	Body: CR{
+		//		"description": "Написать программу db_crud",
+		//	},
+		//	Result: CR{
+		//		"response": CR{
+		//			"updated": 1,
+		//		},
+		//	},
+		//},
+		//Case{
+		//	Path: "/items/3",
+		//	Result: CR{
+		//		"response": CR{
+		//			"record": CR{
+		//				"id":          3,
+		//				"title":       "db_crud",
+		//				"description": "Написать программу db_crud",
+		//				"updated":     nil,
+		//			},
+		//		},
+		//	},
+		//},
+		//
+		//// обновление null-поля в таблице
+		//Case{
+		//	Path:   "/items/3",
+		//	Method: http.MethodPost,
+		//	Body: CR{
+		//		"updated": "autotests",
+		//	},
+		//	Result: CR{
+		//		"response": CR{
+		//			"updated": 1,
+		//		},
+		//	},
+		//},
+		//Case{
+		//	Path: "/items/3",
+		//	Result: CR{
+		//		"response": CR{
+		//			"record": CR{
+		//				"id":          3,
+		//				"title":       "db_crud",
+		//				"description": "Написать программу db_crud",
+		//				"updated":     "autotests",
+		//			},
+		//		},
+		//	},
+		//},
+		//
+		//// обновление null-поля в таблице
+		//Case{
+		//	Path:   "/items/3",
+		//	Method: http.MethodPost,
+		//	Body: CR{
+		//		"updated": nil,
+		//	},
+		//	Result: CR{
+		//		"response": CR{
+		//			"updated": 1,
+		//		},
+		//	},
+		//},
+		//Case{
+		//	Path: "/items/3",
+		//	Result: CR{
+		//		"response": CR{
+		//			"record": CR{
+		//				"id":          3,
+		//				"title":       "db_crud",
+		//				"description": "Написать программу db_crud",
+		//				"updated":     nil,
+		//			},
+		//		},
+		//	},
+		//},
+		//
+		//// ошибки
+		//Case{
+		//	Path:   "/items/3",
+		//	Method: http.MethodPost,
+		//	Status: http.StatusBadRequest,
+		//	Body: CR{
+		//		"id": 4, // primary key нельзя обновлять у существующей записи
+		//	},
+		//	Result: CR{
+		//		"error": "field id have invalid type",
+		//	},
+		//},
 		Case{
 			Path:   "/items/3",
 			Method: http.MethodPost,
