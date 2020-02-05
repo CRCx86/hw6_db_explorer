@@ -91,7 +91,7 @@ func handler(c config) func(http.ResponseWriter, *http.Request) {
 			table := params[1]
 			id := params[2]
 			body := request.Body
-			result, ok := createUpdateRow(c.db, table, body, id)
+			result, _, ok := createUpdateRow(c.db, table, body, id)
 			if ok != nil {
 
 				if strings.Contains(ok.Error(), "invalid type") {
@@ -111,14 +111,24 @@ func handler(c config) func(http.ResponseWriter, *http.Request) {
 			table := params[1]
 			id := params[2]
 			body := request.Body
-			result, ok := createUpdateRow(c.db, table, body, id)
+			result, key, ok := createUpdateRow(c.db, table, body, id)
 			if ok != nil {
 				writer.WriteHeader(http.StatusInternalServerError)
 				return
 			}
-			writer.Write(ResponseCreated(result, "id"))
+			writer.Write(ResponseCreated(result, key))
 		case http.MethodDelete:
-
+			path := request.URL.Path
+			params := strings.Split(path, "/")
+			table := params[1]
+			id := params[2]
+			result, ok := deleteRow(c.db, table, id)
+			if ok != nil {
+				writer.WriteHeader(http.StatusNotFound)
+				writer.Write(ResponseError(ok.Error()))
+				return
+			}
+			writer.Write(ResponseDelete(result, "deleted"))
 		default:
 			writer.WriteHeader(http.StatusInternalServerError)
 		}
@@ -215,7 +225,12 @@ func findById(db *sql.DB, table string, id string) (map[string]interface{}, erro
 
 	var objects map[string]interface{}
 
-	rows, ok := db.Query(fmt.Sprintf("SELECT * FROM %s where %s = ?", table, "id"), id)
+	key, ok := keyField(db, table)
+	if ok != nil {
+		return nil, ok
+	}
+
+	rows, ok := db.Query(fmt.Sprintf("SELECT * FROM %s where %s = ?", table, key), id)
 	if ok != nil {
 		return nil, ok
 	}
@@ -257,19 +272,24 @@ func findById(db *sql.DB, table string, id string) (map[string]interface{}, erro
 	return nil, errors.New("record not found")
 }
 
-func createUpdateRow(db *sql.DB, table string, body io.ReadCloser, id string) (int, error) {
+func createUpdateRow(db *sql.DB, table string, body io.ReadCloser, id string) (int, string, error) {
 
 	rows, ok := ioutil.ReadAll(body)
 	if ok != nil {
-		return -1, ok
+		return -1, "", ok
 	}
 	defer body.Close()
 
 	bodyValues := make(map[string]interface{})
 	ok = json.Unmarshal(rows, &bodyValues)
+	if ok != nil {
+		return -1, "", ok
+	}
 
-	if ok := validateFields(db, table, bodyValues); ok != nil {
-		return -1, ok
+	var key string
+	key, ok = validateFields(db, table, &bodyValues, id)
+	if ok != nil {
+		return -1, "", ok
 	}
 
 	// POST
@@ -294,15 +314,15 @@ func createUpdateRow(db *sql.DB, table string, body io.ReadCloser, id string) (i
 
 		result, ok := db.Exec(fmt.Sprintf("INSERT INTO %s (%s) VALUES(%s)", table, fields, placeholders), values...)
 		if ok != nil {
-			return -1, ok
+			return -1, "", ok
 		}
 
 		created, ok := result.LastInsertId()
 		if ok != nil {
-			return -1, ok
+			return -1, "", ok
 		}
 
-		return int(created), nil
+		return int(created), key, nil
 
 	} else {
 		// PUT
@@ -310,8 +330,9 @@ func createUpdateRow(db *sql.DB, table string, body io.ReadCloser, id string) (i
 		var values []interface{}
 		for k, v := range bodyValues {
 
-			if k == "id" {
-				return -1, errors.New("field id have invalid type")
+			if k == key {
+				m := "field " + key + " have invalid type"
+				return -1, "", errors.New(m)
 			}
 
 			if len(fields) > 0 {
@@ -323,27 +344,46 @@ func createUpdateRow(db *sql.DB, table string, body io.ReadCloser, id string) (i
 
 		values = append(values, id)
 
-		result, ok := db.Exec(fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?", table, fields, "id"), values...)
+		result, ok := db.Exec(fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?", table, fields, key), values...)
 		if ok != nil {
-			return -1, ok
+			return -1, "", ok
 		}
 
 		updated, ok := result.RowsAffected()
 		if ok != nil {
-			return -1, ok
+			return -1, "", ok
 		}
 
-		return int(updated), nil
+		return int(updated), key, nil
 	}
 }
 
-func validateFields(db *sql.DB, tableName string, values map[string]interface{}) error {
+func deleteRow(db *sql.DB, table string, id string) (int, error) {
 
+	key, ok := keyField(db, table)
+	if ok != nil {
+		return -1, ok
+	}
+
+	result, ok := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE %s = ?", table, key), id)
+	if ok != nil {
+		return -1, ok
+	}
+
+	deleted, ok := result.RowsAffected()
+	if ok != nil {
+		return -1, ok
+	}
+
+	return int(deleted), nil
+}
+
+func keyField(db *sql.DB, tableName string) (string, error) {
 	var objects []map[string]interface{}
 
 	rows, ok := db.Query(fmt.Sprintf("SHOW FULL COLUMNS FROM %s", tableName))
 	if ok != nil {
-		return ok
+		return "", ok
 	}
 	defer rows.Close()
 
@@ -372,22 +412,133 @@ func validateFields(db *sql.DB, tableName string, values map[string]interface{})
 
 		ok := rows.Scan(values...)
 		if ok != nil {
-			return ok
+			return "", ok
 		}
 
 		objects = append(objects, object)
 	}
 
-	for i, val := range values {
-		for k, v := range objects {
+	var key string
+	for _, v := range objects {
+		k := **v["Key"].(**string)
+		if strings.Contains(k, "PRI") {
 			s := **v["Field"].(**string)
+			key = s
+			break
+		}
+	}
+
+	return key, nil
+}
+
+func validateFields(db *sql.DB, tableName string, values *map[string]interface{}, id string) (string, error) {
+
+	var objects []map[string]interface{}
+
+	rows, ok := db.Query(fmt.Sprintf("SHOW FULL COLUMNS FROM %s", tableName))
+	if ok != nil {
+		return "", ok
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		columnTypes, _ := rows.ColumnTypes()
+
+		values := make([]interface{}, len(columnTypes))
+		object := map[string]interface{}{}
+		for i, column := range columnTypes {
+
+			v := reflect.New(column.ScanType()).Interface()
+			switch v.(type) {
+			case *[]uint8:
+				v = new(*string)
+			case *int32:
+				v = new(*int32)
+			case *sql.RawBytes:
+				v = new(*string)
+			default:
+				values[i] = v
+			}
+
+			object[column.Name()] = v
+			values[i] = v
+		}
+
+		ok := rows.Scan(values...)
+		if ok != nil {
+			return "", ok
+		}
+
+		objects = append(objects, object)
+	}
+
+	valid := true
+	var field string
+	var key string
+	columns := make(map[string]interface{})
+	defaults := make(map[string]interface{})
+	for i, val := range *values {
+		for _, v := range objects {
+			s := **v["Field"].(**string)
+			t := **v["Type"].(**string)
+			n := **v["Null"].(**string)
+			k := **v["Key"].(**string)
+			if strings.Contains(k, "PRI") {
+				key = s
+			}
+			if strings.Contains(n, "NO") {
+				defaults[s] = s
+			}
 			if s == i {
-				fmt.Println(k, val)
+				switch val.(type) {
+				case float64:
+					valid = strings.Contains(t, "int")
+				case int:
+					valid = strings.Contains(t, "int")
+				case string:
+					valid = strings.Contains(t, "varchar") || strings.Contains(t, "text")
+				default:
+					valid = strings.Contains(n, "YES")
+				}
+			}
+			if !valid {
+				field = s
+				break
+			}
+			columns[s] = s
+		}
+		if !valid {
+			break
+		}
+	}
+
+	unknows := []string{}
+	for k, _ := range *values {
+		if _, ok := columns[k]; !ok {
+			unknows = append(unknows, k)
+		}
+	}
+	for _, v := range unknows {
+		delete(*values, v)
+	}
+
+	if id == "" {
+		for k, _ := range defaults {
+			if k == key {
+				continue
+			}
+			if _, ok := (*values)[k]; !ok {
+				(*values)[k] = ""
 			}
 		}
 	}
 
-	return nil
+	if valid {
+		return key, nil
+	}
+
+	e := "field " + field + " have invalid type"
+	return "", errors.New(e)
 }
 
 func Response(rows []string, key string) []byte {
@@ -434,6 +585,15 @@ func ResponseCreated(id int, key string) []byte {
 }
 
 func ResponseUpdated(id int, key string) []byte {
+	response := make(map[string]interface{})
+	responseRows := make(map[string]interface{})
+	responseRows[key] = id
+	response["response"] = responseRows
+	json, _ := json.Marshal(response)
+	return json
+}
+
+func ResponseDelete(id int, key string) []byte {
 	response := make(map[string]interface{})
 	responseRows := make(map[string]interface{})
 	responseRows[key] = id
